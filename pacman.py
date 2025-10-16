@@ -5,13 +5,24 @@ import os
 
 # Initialize Pygame
 pygame.init()
+pygame.mixer.init()
 
 # Constants
-SCREEN_WIDTH = 600
-SCREEN_HEIGHT = 300
-CELL_SIZE = 20
+# Get display info for fullscreen
+display_info = pygame.display.Info()
+SCREEN_WIDTH = display_info.current_w
+SCREEN_HEIGHT = display_info.current_h
+
+# Calculate cell size based on screen size to fit the maze
 MAZE_WIDTH = 30
 MAZE_HEIGHT = 15
+CELL_SIZE = min(SCREEN_WIDTH // MAZE_WIDTH, SCREEN_HEIGHT // MAZE_HEIGHT)
+
+# Recalculate actual screen dimensions to center the maze
+GAME_WIDTH = MAZE_WIDTH * CELL_SIZE
+GAME_HEIGHT = MAZE_HEIGHT * CELL_SIZE
+OFFSET_X = (SCREEN_WIDTH - GAME_WIDTH) // 2
+OFFSET_Y = (SCREEN_HEIGHT - GAME_HEIGHT) // 2
 
 # Colors
 BLACK = (0, 0, 0)
@@ -31,9 +42,9 @@ MAZE = [
     [1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
     [1,2,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,2,1,1],
     [1,2,2,2,2,2,1,1,2,2,2,2,2,1,1,1,1,2,2,2,2,2,1,1,2,2,2,2,2,1],
-    [1,1,1,1,1,2,1,1,1,1,1,1,2,1,0,0,1,2,1,1,1,1,1,1,2,1,1,1,1,1],
-    [1,2,2,2,2,2,2,2,2,2,2,2,2,1,0,0,1,2,2,2,2,2,2,2,2,2,2,2,2,1],
-    [1,2,1,1,1,2,1,1,1,1,1,1,2,1,0,0,1,2,1,1,1,1,1,1,2,1,1,1,2,1],
+    [1,1,1,1,1,2,1,1,1,1,1,1,2,1,1,1,1,2,1,1,1,1,1,1,2,1,1,1,1,1],
+    [1,2,2,2,2,2,2,2,2,2,2,2,2,0,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,1],
+    [1,2,1,1,1,2,1,1,1,1,1,1,2,1,1,0,1,2,1,1,1,1,1,1,2,1,1,1,2,1],
     [1,2,2,2,2,2,1,1,2,2,2,2,2,1,1,1,1,2,2,2,2,2,1,1,2,2,2,2,2,1],
     [1,2,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,2,1,1],
     [1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
@@ -94,8 +105,8 @@ class PacMan:
                 self.y = round(self.y)
     
     def draw(self, screen):
-        center_x = int(self.x * CELL_SIZE + CELL_SIZE // 2)
-        center_y = int(self.y * CELL_SIZE + CELL_SIZE // 2)
+        center_x = int(self.x * CELL_SIZE + CELL_SIZE // 2 + OFFSET_X)
+        center_y = int(self.y * CELL_SIZE + CELL_SIZE // 2 + OFFSET_Y)
         radius = CELL_SIZE // 2 - 2
         
         if self.mouth_open:
@@ -133,15 +144,30 @@ class Ghost:
     def __init__(self, x, y, color):
         self.x = float(x)
         self.y = float(y)
+        self.initial_x = float(x)
+        self.initial_y = float(y)
         self.original_color = color
         self.color = color
         self.direction = 0  # 0: right, 1: down, 2: left, 3: up
-        self.speed = 0.08
+        self.speed = 0.18
         self.vulnerable = False
         self.vulnerable_timer = 0
         self.move_timer = 0
+        self.in_house = True
+        self.exit_timer = 30  # Leave house faster
         
     def update(self, pacman_x, pacman_y, maze):
+        # Handle ghost house exit
+        if self.in_house:
+            self.exit_timer -= 1
+            if self.exit_timer <= 0:
+                self.in_house = False
+                # Move to exit position (center of row 7 where the opening is)
+                self.x = 14.5  # Center between 14 and 15
+                self.y = 7.0
+            # Stay in house until timer expires
+            return
+        
         # Update vulnerability
         if self.vulnerable:
             self.vulnerable_timer -= 1
@@ -156,9 +182,9 @@ class Ghost:
                 else:
                     self.color = (0, 0, 150)  # Dark blue when vulnerable
         
-        # Move every few frames (faster movement)
+        # Move every few frames (much faster movement)
         self.move_timer += 1
-        if self.move_timer >= 8:  # Move every 8 frames (faster)
+        if self.move_timer >= 2:  # Move every 2 frames (much faster)
             self.move_timer = 0
             self.ai_move(pacman_x, pacman_y, maze)
     
@@ -166,17 +192,23 @@ class Ghost:
         self.vulnerable = True
         self.vulnerable_timer = 300  # 5 seconds at 60 FPS
         self.color = (0, 0, 150)  # Dark blue
-        self.speed = 0.04  # Slower when vulnerable
+        self.speed = 0.09  # Slightly slower when vulnerable, but still fast
+        # Not in house when made vulnerable
+        self.in_house = False
     
     def can_move(self, x, y, maze):
         grid_x = int(round(x))
         grid_y = int(round(y))
-        
+        # Check boundaries
         if grid_x < 0 or grid_x >= MAZE_WIDTH or grid_y < 0 or grid_y >= MAZE_HEIGHT:
             return False
-        
-        # Allow movement in empty spaces (0) and dot spaces (2,3), block walls (1)
-        return maze[grid_y][grid_x] != 1
+        # Check if position is a wall or not a valid path (only 0, 2, 3 are valid)
+        if maze[grid_y][grid_x] not in (0, 2, 3):
+            return False
+        # Prevent ghosts from getting too close to boundaries
+        if x < 0.7 or x > MAZE_WIDTH - 0.7 or y < 0.7 or y > MAZE_HEIGHT - 0.7:
+            return False
+        return True
     
     def ai_move(self, pacman_x, pacman_y, maze):
         import random
@@ -187,16 +219,16 @@ class Ghost:
         
         # Find all valid moves
         for i, (dx, dy) in enumerate(directions):
-            new_x = self.x + dx * self.speed * 5  # Check further ahead
-            new_y = self.y + dy * self.speed * 5
+            new_x = self.x + dx * self.speed * 8  # Check further ahead for accuracy
+            new_y = self.y + dy * self.speed * 8
             if self.can_move(new_x, new_y, maze):
                 valid_moves.append((i, dx, dy))
         
         if not valid_moves:
             # If no moves available, try smaller steps
             for i, (dx, dy) in enumerate(directions):
-                new_x = self.x + dx * 0.5
-                new_y = self.y + dy * 0.5
+                new_x = self.x + dx * 0.8
+                new_y = self.y + dy * 0.8
                 if self.can_move(new_x, new_y, maze):
                     valid_moves.append((i, dx, dy))
         
@@ -212,10 +244,9 @@ class Ghost:
             max_distance = -1
             
             for direction, dx, dy in valid_moves:
-                new_x = self.x + dx * self.speed * 3
-                new_y = self.y + dy * self.speed * 3
+                new_x = self.x + dx * self.speed * 6
+                new_y = self.y + dy * self.speed * 6
                 distance = abs(new_x - pacman_x) + abs(new_y - pacman_y)
-                
                 if distance > max_distance:
                     max_distance = distance
                     best_move = (direction, dx, dy)
@@ -228,10 +259,9 @@ class Ghost:
                 min_distance = float('inf')
                 
                 for direction, dx, dy in valid_moves:
-                    new_x = self.x + dx * self.speed * 3
-                    new_y = self.y + dy * self.speed * 3
+                    new_x = self.x + dx * self.speed * 6
+                    new_y = self.y + dy * self.speed * 6
                     distance = abs(new_x - pacman_x) + abs(new_y - pacman_y)
-                    
                     if distance < min_distance:
                         min_distance = distance
                         best_move = (direction, dx, dy)
@@ -289,18 +319,24 @@ class Ghost:
 
 class Game:
     def __init__(self):
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
         pygame.display.set_caption("Pac-Man Game")
         self.clock = pygame.time.Clock()
         
         # Initialize game objects
         self.pacman = PacMan(1, 1)
         self.ghosts = [
-            Ghost(12, 7, RED),
-            Ghost(17, 7, PINK),
-            Ghost(12, 8, CYAN),
-            Ghost(17, 8, ORANGE)
+            Ghost(14, 7, RED),
+            Ghost(15, 7, PINK),
+            Ghost(14, 8, CYAN),
+            Ghost(15, 8, ORANGE)
         ]
+        
+        # Set different exit timers for ghosts so they don't all leave at once
+        self.ghosts[0].exit_timer = 10   # Red exits almost immediately
+        self.ghosts[1].exit_timer = 30   # Pink exits after 0.5 seconds
+        self.ghosts[2].exit_timer = 50   # Cyan exits after ~0.8 seconds
+        self.ghosts[3].exit_timer = 70   # Orange exits after ~1.2 seconds
         
         self.score = 0
         self.font = pygame.font.Font(None, 36)
@@ -310,6 +346,74 @@ class Game:
         
         # Copy maze for dot management
         self.maze = [row[:] for row in MAZE]
+        
+        # Initialize sounds with procedural generation
+        self.sounds = self.create_sounds()
+
+    def create_sounds(self):
+        """Create simple beep sounds procedurally"""
+        sounds = {}
+        try:
+            import numpy as np
+            sample_rate = 22050
+            
+            # Eat dot sound - quick high beep
+            duration = 0.05
+            n_samples = int(duration * sample_rate)
+            buf = np.zeros((n_samples, 2), dtype=np.int16)
+            max_sample = 2 ** 14
+            for i in range(n_samples):
+                t = float(i) / sample_rate
+                value = int(max_sample * 0.2 * np.sin(2.0 * np.pi * 800 * t) * np.exp(-t * 10))
+                buf[i][0] = value
+                buf[i][1] = value
+            sounds['eat_dot'] = pygame.sndarray.make_sound(buf)
+            
+            # Power pellet sound
+            duration = 0.15
+            n_samples = int(duration * sample_rate)
+            buf = np.zeros((n_samples, 2), dtype=np.int16)
+            for i in range(n_samples):
+                t = float(i) / sample_rate
+                value = int(max_sample * 0.3 * np.sin(2.0 * np.pi * 500 * t) * np.exp(-t * 8))
+                buf[i][0] = value
+                buf[i][1] = value
+            sounds['power_pellet'] = pygame.sndarray.make_sound(buf)
+            
+            # Eat ghost sound - rising pitch
+            duration = 0.3
+            n_samples = int(duration * sample_rate)
+            buf = np.zeros((n_samples, 2), dtype=np.int16)
+            for i in range(n_samples):
+                t = float(i) / sample_rate
+                freq = 400 + (400 * t / duration)
+                value = int(max_sample * 0.4 * np.sin(2.0 * np.pi * freq * t) * np.exp(-t * 6))
+                buf[i][0] = value
+                buf[i][1] = value
+            sounds['eat_ghost'] = pygame.sndarray.make_sound(buf)
+            
+            # Death sound - falling pitch
+            duration = 0.5
+            n_samples = int(duration * sample_rate)
+            buf = np.zeros((n_samples, 2), dtype=np.int16)
+            for i in range(n_samples):
+                t = float(i) / sample_rate
+                freq = 600 - (400 * t / duration)
+                value = int(max_sample * 0.4 * np.sin(2.0 * np.pi * freq * t) * (1 - t / duration))
+                buf[i][0] = value
+                buf[i][1] = value
+            sounds['death'] = pygame.sndarray.make_sound(buf)
+            
+        except:
+            # If numpy not available, create empty sounds
+            sounds = {'eat_dot': None, 'power_pellet': None, 'eat_ghost': None, 'death': None}
+        
+        return sounds
+    
+    def play_sound(self, sound_name):
+        """Play a sound if it exists"""
+        if sound_name in self.sounds and self.sounds[sound_name]:
+            self.sounds[sound_name].play()
 
     def handle_input(self):
         keys = pygame.key.get_pressed()
@@ -334,9 +438,11 @@ class Game:
                 if self.maze[pac_y][pac_x] == 2:  # Regular dot
                     self.maze[pac_y][pac_x] = 0
                     self.score += 10
+                    self.play_sound('eat_dot')
                 elif self.maze[pac_y][pac_x] == 3:  # Power pellet
                     self.maze[pac_y][pac_x] = 0
                     self.score += 50
+                    self.play_sound('power_pellet')
                     self.activate_power_mode()
 
     def activate_power_mode(self):
@@ -350,20 +456,29 @@ class Game:
         pac_y = self.pacman.y
         
         for ghost in self.ghosts:
+            # Skip collision check if ghost is in house
+            if ghost.in_house:
+                continue
+                
+            # Use Manhattan distance for collision detection
             distance = abs(pac_x - ghost.x) + abs(pac_y - ghost.y)
-            if distance < 0.5:  # Collision detected
+            if distance < 0.6:  # Collision detected (increased from 0.5 for better detection)
                 if ghost.vulnerable:
                     # Eat the ghost
                     self.score += 200
-                    # Reset ghost to main corridor
-                    ghost.x = 14.5
-                    ghost.y = 7.0
+                    self.play_sound('eat_ghost')
+                    # Reset ghost to ghost house
+                    ghost.x = ghost.initial_x
+                    ghost.y = ghost.initial_y
+                    ghost.in_house = True
+                    ghost.exit_timer = 120  # Wait 2 seconds before leaving
                     ghost.vulnerable = False
                     ghost.color = ghost.original_color
                     ghost.speed = 0.08
                 else:
                     # Game over
                     self.game_over = True
+                    self.play_sound('death')
                     return
 
     def update_power_mode(self):
@@ -375,17 +490,17 @@ class Game:
     def draw_maze(self):
         for y in range(len(self.maze)):
             for x in range(len(self.maze[y])):
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+                rect = pygame.Rect(x * CELL_SIZE + OFFSET_X, y * CELL_SIZE + OFFSET_Y, CELL_SIZE, CELL_SIZE)
                 
                 if self.maze[y][x] == 1:  # Wall
                     pygame.draw.rect(self.screen, BLUE, rect)
                 elif self.maze[y][x] == 2:  # Dot
-                    center_x = x * CELL_SIZE + CELL_SIZE // 2
-                    center_y = y * CELL_SIZE + CELL_SIZE // 2
+                    center_x = x * CELL_SIZE + CELL_SIZE // 2 + OFFSET_X
+                    center_y = y * CELL_SIZE + CELL_SIZE // 2 + OFFSET_Y
                     pygame.draw.circle(self.screen, WHITE, (center_x, center_y), 3)
                 elif self.maze[y][x] == 3:  # Power pellet
-                    center_x = x * CELL_SIZE + CELL_SIZE // 2
-                    center_y = y * CELL_SIZE + CELL_SIZE // 2
+                    center_x = x * CELL_SIZE + CELL_SIZE // 2 + OFFSET_X
+                    center_y = y * CELL_SIZE + CELL_SIZE // 2 + OFFSET_Y
                     pygame.draw.circle(self.screen, YELLOW, (center_x, center_y), 8)
 
     def draw_ui(self):
@@ -437,434 +552,11 @@ class Game:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    if self.game_over:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif self.game_over:
                         if event.key == pygame.K_r:
                             self.restart_game()
-                        elif event.key == pygame.K_ESCAPE:
-                            running = False
-            
-            if not self.game_over:
-                # Handle input
-                self.handle_input()
-                
-                # Update game objects
-                self.pacman.update()
-                self.check_dot_collection()
-                self.update_power_mode()
-                
-                # Update ghosts with AI
-                for ghost in self.ghosts:
-                    ghost.update(self.pacman.x, self.pacman.y, self.maze)
-                
-                # Check collisions
-                self.check_ghost_collisions()
-            
-            # Draw everything
-            self.screen.fill(BLACK)
-            self.draw_maze()
-            
-            # Draw game objects
-            if not self.game_over:
-                self.pacman.draw(self.screen)
-            for ghost in self.ghosts:
-                ghost.draw(self.screen)
-            
-            self.draw_ui()
-            
-            pygame.display.flip()
-            self.clock.tick(60)
-        
-        pygame.quit()
-        sys.exit()
-
-if __name__ == "__main__":
-    game = Game()
-    game.run()
-    
-    def draw(self, screen):
-        center_x = int(self.x * CELL_SIZE + CELL_SIZE // 2)
-        center_y = int(self.y * CELL_SIZE + CELL_SIZE // 2)
-        radius = CELL_SIZE // 2 - 2
-        
-        if self.mouth_open:
-            # Draw Pac-Man with mouth open
-            start_angle = 0
-            end_angle = 0
-            
-            if self.direction == 0:  # right
-                start_angle = math.pi / 6
-                end_angle = -math.pi / 6
-            elif self.direction == 1:  # down
-                start_angle = math.pi / 6 + math.pi / 2
-                end_angle = -math.pi / 6 + math.pi / 2
-            elif self.direction == 2:  # left
-                start_angle = math.pi / 6 + math.pi
-                end_angle = -math.pi / 6 + math.pi
-            elif self.direction == 3:  # up
-                start_angle = math.pi / 6 - math.pi / 2
-                end_angle = -math.pi / 6 - math.pi / 2
-            
-            # Draw the arc (Pac-Man with mouth)
-            points = [(center_x, center_y)]
-            for angle in [i * 0.1 for i in range(int(end_angle * 10), int(start_angle * 10) + 1)]:
-                x = center_x + int(radius * math.cos(angle))
-                y = center_y + int(radius * math.sin(angle))
-                points.append((x, y))
-            
-            if len(points) > 2:
-                pygame.draw.polygon(screen, YELLOW, points)
-        else:
-            # Draw full circle when mouth is closed
-            pygame.draw.circle(screen, YELLOW, (center_x, center_y), radius)
-
-class Ghost:
-    def __init__(self, x, y, color):
-        self.x = float(x)
-        self.y = float(y)
-        self.original_color = color
-        self.color = color
-        self.direction = 0  # 0: right, 1: down, 2: left, 3: up
-        self.speed = 0.08
-        self.vulnerable = False
-        self.vulnerable_timer = 0
-        self.move_timer = 0
-        
-    def update(self, pacman_x, pacman_y, maze):
-        # Update vulnerability
-        if self.vulnerable:
-            self.vulnerable_timer -= 1
-            if self.vulnerable_timer <= 0:
-                self.vulnerable = False
-                self.color = self.original_color
-                self.speed = 0.08
-            else:
-                # Flash when vulnerability is about to end
-                if self.vulnerable_timer < 120 and self.vulnerable_timer % 20 < 10:
-                    self.color = WHITE
-                else:
-                    self.color = (0, 0, 150)  # Dark blue when vulnerable
-        
-        # Move every few frames (faster movement)
-        self.move_timer += 1
-        if self.move_timer >= 8:  # Move every 8 frames (faster)
-            self.move_timer = 0
-            self.ai_move(pacman_x, pacman_y, maze)
-    
-    def make_vulnerable(self):
-        self.vulnerable = True
-        self.vulnerable_timer = 300  # 5 seconds at 60 FPS
-        self.color = (0, 0, 150)  # Dark blue
-        self.speed = 0.04  # Slower when vulnerable
-    
-    def can_move(self, x, y, maze):
-        grid_x = int(round(x))
-        grid_y = int(round(y))
-        
-        if grid_x < 0 or grid_x >= MAZE_WIDTH or grid_y < 0 or grid_y >= MAZE_HEIGHT:
-            return False
-        
-        # Allow movement in empty spaces (0) and dot spaces (2,3), block walls (1)
-        return maze[grid_y][grid_x] != 1
-    
-    def ai_move(self, pacman_x, pacman_y, maze):
-        import random
-        
-        # Possible directions: right, down, left, up
-        directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
-        valid_moves = []
-        
-        # Find all valid moves
-        for i, (dx, dy) in enumerate(directions):
-            new_x = self.x + dx * self.speed * 5  # Check further ahead
-            new_y = self.y + dy * self.speed * 5
-            if self.can_move(new_x, new_y, maze):
-                valid_moves.append((i, dx, dy))
-        
-        if not valid_moves:
-            # If no moves available, try smaller steps
-            for i, (dx, dy) in enumerate(directions):
-                new_x = self.x + dx * 0.5
-                new_y = self.y + dy * 0.5
-                if self.can_move(new_x, new_y, maze):
-                    valid_moves.append((i, dx, dy))
-        
-        if not valid_moves:
-            return
-        
-        # Choose the best move
-        chosen_move = None
-        
-        if self.vulnerable:
-            # When vulnerable, try to avoid Pac-Man
-            best_move = None
-            max_distance = -1
-            
-            for direction, dx, dy in valid_moves:
-                new_x = self.x + dx * self.speed * 3
-                new_y = self.y + dy * self.speed * 3
-                distance = abs(new_x - pacman_x) + abs(new_y - pacman_y)
-                
-                if distance > max_distance:
-                    max_distance = distance
-                    best_move = (direction, dx, dy)
-            
-            chosen_move = best_move
-        else:
-            # When not vulnerable, chase Pac-Man with some randomness
-            if random.random() < 0.6:  # 60% chance to chase
-                best_move = None
-                min_distance = float('inf')
-                
-                for direction, dx, dy in valid_moves:
-                    new_x = self.x + dx * self.speed * 3
-                    new_y = self.y + dy * self.speed * 3
-                    distance = abs(new_x - pacman_x) + abs(new_y - pacman_y)
-                    
-                    if distance < min_distance:
-                        min_distance = distance
-                        best_move = (direction, dx, dy)
-                
-                chosen_move = best_move
-            else:
-                # 40% chance to move randomly
-                chosen_move = random.choice(valid_moves)
-        
-        # Execute the chosen move
-        if chosen_move:
-            direction, dx, dy = chosen_move
-            self.direction = direction
-            new_x = self.x + dx * self.speed
-            new_y = self.y + dy * self.speed
-            if self.can_move(new_x, new_y, maze):
-                self.x = new_x
-                self.y = new_y
-            else:
-                # If the chosen move fails, try any valid move
-                for direction, dx, dy in valid_moves:
-                    new_x = self.x + dx * self.speed
-                    new_y = self.y + dy * self.speed
-                    if self.can_move(new_x, new_y, maze):
-                        self.x = new_x
-                        self.y = new_y
-                        self.direction = direction
-                        break
-    
-    def draw(self, screen):
-        center_x = int(self.x * CELL_SIZE + CELL_SIZE // 2)
-        center_y = int(self.y * CELL_SIZE + CELL_SIZE // 2)
-        radius = CELL_SIZE // 2 - 2
-        
-        # Draw ghost body (rectangle with rounded top)
-        rect_height = radius + 5
-        pygame.draw.rect(screen, self.color, 
-                        (center_x - radius, center_y - radius, 
-                         radius * 2, rect_height))
-        pygame.draw.circle(screen, self.color, (center_x, center_y - radius // 2), radius)
-        
-        # Draw eyes
-        eye_size = 3
-        pygame.draw.circle(screen, WHITE, (center_x - 5, center_y - 5), eye_size)
-        pygame.draw.circle(screen, WHITE, (center_x + 5, center_y - 5), eye_size)
-        
-        if self.vulnerable and not (self.vulnerable_timer < 120 and self.vulnerable_timer % 20 < 10):
-            # When vulnerable, draw white pupils
-            pygame.draw.circle(screen, WHITE, (center_x - 5, center_y - 5), 1)
-            pygame.draw.circle(screen, WHITE, (center_x + 5, center_y - 5), 1)
-        else:
-            # Normal black pupils
-            pygame.draw.circle(screen, BLACK, (center_x - 5, center_y - 5), 2)
-            pygame.draw.circle(screen, BLACK, (center_x + 5, center_y - 5), 2)
-
-class Game:
-    def __init__(self):
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("Pac-Man Game")
-        self.clock = pygame.time.Clock()
-        
-        # Initialize game objects
-        self.pacman = PacMan(1, 1)
-        self.ghosts = [
-            Ghost(12, 7, RED),
-            Ghost(17, 7, PINK),
-            Ghost(12, 8, CYAN),
-            Ghost(17, 8, ORANGE)
-        ]
-        
-        self.score = 0
-        self.high_score = 0
-        self.font = pygame.font.Font(None, 36)
-        self.game_over = False
-        self.power_mode = False
-        self.power_timer = 0
-        
-    # Copy maze for dot management
-        self.maze = [row[:] for row in MAZE]
-        # High score file
-        self.highscore_file = os.path.join(os.path.dirname(__file__), "highscore.txt")
-        self.load_high_score()
-
-    def load_high_score(self):
-        try:
-            if os.path.exists(self.highscore_file):
-                with open(self.highscore_file, "r") as f:
-                    text = f.read().strip()
-                    self.high_score = int(text) if text.isdigit() else 0
-            else:
-                self.high_score = 0
-        except Exception:
-            self.high_score = 0
-
-    def save_high_score(self):
-        try:
-            with open(self.highscore_file, "w") as f:
-                f.write(str(self.high_score))
-        except Exception:
-            pass
-    
-    def handle_input(self):
-        keys = pygame.key.get_pressed()
-
-        # Only allow one direction at a time for more accurate movement
-        if keys[pygame.K_RIGHT] and not any([keys[pygame.K_LEFT], keys[pygame.K_UP], keys[pygame.K_DOWN]]):
-            self.pacman.move(self.pacman.speed, 0)
-        elif keys[pygame.K_LEFT] and not any([keys[pygame.K_RIGHT], keys[pygame.K_UP], keys[pygame.K_DOWN]]):
-            self.pacman.move(-self.pacman.speed, 0)
-        elif keys[pygame.K_DOWN] and not any([keys[pygame.K_LEFT], keys[pygame.K_RIGHT], keys[pygame.K_UP]]):
-            self.pacman.move(0, self.pacman.speed)
-        elif keys[pygame.K_UP] and not any([keys[pygame.K_LEFT], keys[pygame.K_RIGHT], keys[pygame.K_DOWN]]):
-            self.pacman.move(0, -self.pacman.speed)
-    
-    def check_dot_collection(self):
-        pac_x = int(round(self.pacman.x))
-        pac_y = int(round(self.pacman.y))
-        
-        if (0 <= pac_x < MAZE_WIDTH and 0 <= pac_y < MAZE_HEIGHT):
-            # Check if Pac-Man is close enough to the center of the cell
-            if (abs(self.pacman.x - pac_x) < 0.3 and abs(self.pacman.y - pac_y) < 0.3):
-                if self.maze[pac_y][pac_x] == 2:  # Regular dot
-                    self.maze[pac_y][pac_x] = 0
-                    self.score += 10
-                    if self.score > self.high_score:
-                        self.high_score = self.score
-                        self.save_high_score()
-                elif self.maze[pac_y][pac_x] == 3:  # Power pellet
-                    self.maze[pac_y][pac_x] = 0
-                    self.score += 50
-                    if self.score > self.high_score:
-                        self.high_score = self.score
-                        self.save_high_score()
-                    self.activate_power_mode()
-    
-    def activate_power_mode(self):
-        self.power_mode = True
-        self.power_timer = 300  # 5 seconds at 60 FPS
-        for ghost in self.ghosts:
-            ghost.make_vulnerable()
-    
-    def check_ghost_collisions(self):
-        pac_x = self.pacman.x
-        pac_y = self.pacman.y
-        
-        for ghost in self.ghosts:
-            distance = abs(pac_x - ghost.x) + abs(pac_y - ghost.y)
-            if distance < 0.5:  # Collision detected
-                if ghost.vulnerable:
-                    # Eat the ghost
-                    self.score += 200
-                    if self.score > self.high_score:
-                        self.high_score = self.score
-                        self.save_high_score()
-                    # Reset ghost to main corridor
-                    ghost.x = 14.5
-                    ghost.y = 7.0
-                    ghost.vulnerable = False
-                    ghost.color = ghost.original_color
-                    ghost.speed = 0.08
-                else:
-                    # Game over
-                    self.game_over = True
-                    return
-    
-    def update_power_mode(self):
-        if self.power_mode:
-            self.power_timer -= 1
-            if self.power_timer <= 0:
-                self.power_mode = False
-    
-    def draw_maze(self):
-        for y in range(len(self.maze)):
-            for x in range(len(self.maze[y])):
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                
-                if self.maze[y][x] == 1:  # Wall
-                    pygame.draw.rect(self.screen, BLUE, rect)
-                elif self.maze[y][x] == 2:  # Dot
-                    center_x = x * CELL_SIZE + CELL_SIZE // 2
-                    center_y = y * CELL_SIZE + CELL_SIZE // 2
-                    pygame.draw.circle(self.screen, WHITE, (center_x, center_y), 3)
-                elif self.maze[y][x] == 3:  # Power pellet
-                    center_x = x * CELL_SIZE + CELL_SIZE // 2
-                    center_y = y * CELL_SIZE + CELL_SIZE // 2
-                    pygame.draw.circle(self.screen, YELLOW, (center_x, center_y), 8)
-    
-    def draw_ui(self):
-        score_text = self.font.render(f"Score: {self.score}", True, WHITE)
-        self.screen.blit(score_text, (10, 10))
-        # High score at top-right
-        high_text = self.font.render(f"High: {self.high_score}", True, WHITE)
-        hx = SCREEN_WIDTH - high_text.get_width() - 10
-        self.screen.blit(high_text, (hx, 10))
-        
-        # Power mode indicator
-        if self.power_mode:
-            power_text = pygame.font.Font(None, 24).render(f"POWER MODE: {self.power_timer // 60 + 1}s", True, YELLOW)
-            self.screen.blit(power_text, (10, 40))
-        
-        # Game over screen
-        if self.game_over:
-            game_over_text = self.font.render("GAME OVER!", True, RED)
-            restart_text = pygame.font.Font(None, 24).render("Press R to restart or ESC to quit", True, WHITE)
-            self.screen.blit(game_over_text, (SCREEN_WIDTH // 2 - 80, SCREEN_HEIGHT // 2 - 20))
-            self.screen.blit(restart_text, (SCREEN_WIDTH // 2 - 120, SCREEN_HEIGHT // 2 + 10))
-        
-        # Instructions
-        instructions = [
-            "Arrow keys to move",
-            "Eat dots and power pellets!",
-            "Avoid ghosts (or eat them!)"
-        ]
-        
-        for i, instruction in enumerate(instructions):
-            text = pygame.font.Font(None, 20).render(instruction, True, WHITE)
-            self.screen.blit(text, (SCREEN_WIDTH - 180, 10 + i * 22))
-    
-    def restart_game(self):
-        self.pacman = PacMan(1, 1)
-        self.ghosts = [
-            Ghost(12, 7, RED),
-            Ghost(17, 7, PINK),
-            Ghost(12, 8, CYAN),
-            Ghost(17, 8, ORANGE)
-        ]
-        self.score = 0
-        self.game_over = False
-        self.power_mode = False
-        self.power_timer = 0
-        self.maze = [row[:] for row in MAZE]
-    
-    def run(self):
-        running = True
-        
-        while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if self.game_over:
-                        if event.key == pygame.K_r:
-                            self.restart_game()
-                        elif event.key == pygame.K_ESCAPE:
-                            running = False
             
             if not self.game_over:
                 # Handle input
