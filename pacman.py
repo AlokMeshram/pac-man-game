@@ -149,7 +149,7 @@ class Ghost:
         self.original_color = color
         self.color = color
         self.direction = 0  # 0: right, 1: down, 2: left, 3: up
-        self.speed = 0.18
+        self.speed = 0.08  # Slower for accurate grid-aligned movement
         self.vulnerable = False
         self.vulnerable_timer = 0
         self.move_timer = 0
@@ -174,7 +174,7 @@ class Ghost:
             if self.vulnerable_timer <= 0:
                 self.vulnerable = False
                 self.color = self.original_color
-                self.speed = 0.08
+                self.speed = 0.08  # Reset to normal speed
             else:
                 # Flash when vulnerability is about to end
                 if self.vulnerable_timer < 120 and self.vulnerable_timer % 20 < 10:
@@ -182,32 +182,52 @@ class Ghost:
                 else:
                     self.color = (0, 0, 150)  # Dark blue when vulnerable
         
-        # Move every few frames (much faster movement)
-        self.move_timer += 1
-        if self.move_timer >= 2:  # Move every 2 frames (much faster)
-            self.move_timer = 0
-            self.ai_move(pacman_x, pacman_y, maze)
+        # Move every frame for smooth, accurate movement
+        self.ai_move(pacman_x, pacman_y, maze)
     
     def make_vulnerable(self):
         self.vulnerable = True
         self.vulnerable_timer = 300  # 5 seconds at 60 FPS
         self.color = (0, 0, 150)  # Dark blue
-        self.speed = 0.09  # Slightly slower when vulnerable, but still fast
+        self.speed = 0.05  # Slower when vulnerable for better accuracy
         # Not in house when made vulnerable
         self.in_house = False
     
     def can_move(self, x, y, maze):
-        grid_x = int(round(x))
-        grid_y = int(round(y))
-        # Check boundaries
-        if grid_x < 0 or grid_x >= MAZE_WIDTH or grid_y < 0 or grid_y >= MAZE_HEIGHT:
+        # Check multiple points in a grid pattern around the ghost for thorough collision detection
+        # This ensures the ghost's entire body stays in valid areas
+        check_offsets = [
+            (0, 0),      # Center
+            (0.4, 0),    # Right
+            (-0.4, 0),   # Left
+            (0, 0.4),    # Bottom
+            (0, -0.4),   # Top
+            (0.3, 0.3),  # Bottom-right
+            (-0.3, 0.3), # Bottom-left
+            (0.3, -0.3), # Top-right
+            (-0.3, -0.3) # Top-left
+        ]
+        
+        for dx, dy in check_offsets:
+            check_x = x + dx
+            check_y = y + dy
+            
+            # Convert to grid coordinates
+            grid_x = int(round(check_x))
+            grid_y = int(round(check_y))
+            
+            # Check boundaries
+            if grid_x < 0 or grid_x >= MAZE_WIDTH or grid_y < 0 or grid_y >= MAZE_HEIGHT:
+                return False
+            
+            # Check if position is a wall (only 0, 2, 3 are valid paths)
+            if maze[grid_y][grid_x] not in (0, 2, 3):
+                return False
+        
+        # Prevent ghosts from getting too close to outer boundaries
+        if x < 1.2 or x >= MAZE_WIDTH - 1.2 or y < 1.2 or y >= MAZE_HEIGHT - 1.2:
             return False
-        # Check if position is a wall or not a valid path (only 0, 2, 3 are valid)
-        if maze[grid_y][grid_x] not in (0, 2, 3):
-            return False
-        # Prevent ghosts from getting too close to boundaries
-        if x < 0.7 or x > MAZE_WIDTH - 0.7 or y < 0.7 or y > MAZE_HEIGHT - 0.7:
-            return False
+            
         return True
     
     def ai_move(self, pacman_x, pacman_y, maze):
@@ -217,20 +237,13 @@ class Ghost:
         directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
         valid_moves = []
         
-        # Find all valid moves
+        # Find all valid moves - check the actual movement distance
         for i, (dx, dy) in enumerate(directions):
-            new_x = self.x + dx * self.speed * 8  # Check further ahead for accuracy
-            new_y = self.y + dy * self.speed * 8
+            # Check if we can move in this direction with the actual speed
+            new_x = self.x + dx * self.speed
+            new_y = self.y + dy * self.speed
             if self.can_move(new_x, new_y, maze):
                 valid_moves.append((i, dx, dy))
-        
-        if not valid_moves:
-            # If no moves available, try smaller steps
-            for i, (dx, dy) in enumerate(directions):
-                new_x = self.x + dx * 0.8
-                new_y = self.y + dy * 0.8
-                if self.can_move(new_x, new_y, maze):
-                    valid_moves.append((i, dx, dy))
         
         if not valid_moves:
             return
@@ -244,8 +257,8 @@ class Ghost:
             max_distance = -1
             
             for direction, dx, dy in valid_moves:
-                new_x = self.x + dx * self.speed * 6
-                new_y = self.y + dy * self.speed * 6
+                new_x = self.x + dx * self.speed
+                new_y = self.y + dy * self.speed
                 distance = abs(new_x - pacman_x) + abs(new_y - pacman_y)
                 if distance > max_distance:
                     max_distance = distance
@@ -254,13 +267,13 @@ class Ghost:
             chosen_move = best_move
         else:
             # When not vulnerable, chase Pac-Man with some randomness
-            if random.random() < 0.6:  # 60% chance to chase
+            if random.random() < 0.7:  # 70% chance to chase
                 best_move = None
                 min_distance = float('inf')
                 
                 for direction, dx, dy in valid_moves:
-                    new_x = self.x + dx * self.speed * 6
-                    new_y = self.y + dy * self.speed * 6
+                    new_x = self.x + dx * self.speed
+                    new_y = self.y + dy * self.speed
                     distance = abs(new_x - pacman_x) + abs(new_y - pacman_y)
                     if distance < min_distance:
                         min_distance = distance
@@ -268,28 +281,19 @@ class Ghost:
                 
                 chosen_move = best_move
             else:
-                # 40% chance to move randomly
+                # 30% chance to move randomly
                 chosen_move = random.choice(valid_moves)
         
-        # Execute the chosen move
+        # Execute the chosen move (already validated in valid_moves)
         if chosen_move:
             direction, dx, dy = chosen_move
             self.direction = direction
             new_x = self.x + dx * self.speed
             new_y = self.y + dy * self.speed
+            # Double-check before moving
             if self.can_move(new_x, new_y, maze):
                 self.x = new_x
                 self.y = new_y
-            else:
-                # If the chosen move fails, try any valid move
-                for direction, dx, dy in valid_moves:
-                    new_x = self.x + dx * self.speed
-                    new_y = self.y + dy * self.speed
-                    if self.can_move(new_x, new_y, maze):
-                        self.x = new_x
-                        self.y = new_y
-                        self.direction = direction
-                        break
     
     def draw(self, screen):
         center_x = int(self.x * CELL_SIZE + CELL_SIZE // 2)
@@ -459,10 +463,14 @@ class Game:
             # Skip collision check if ghost is in house
             if ghost.in_house:
                 continue
-                
-            # Use Manhattan distance for collision detection
-            distance = abs(pac_x - ghost.x) + abs(pac_y - ghost.y)
-            if distance < 0.6:  # Collision detected (increased from 0.5 for better detection)
+            
+            # Calculate Euclidean distance for more accurate circular collision
+            dx = pac_x - ghost.x
+            dy = pac_y - ghost.y
+            distance = (dx * dx + dy * dy) ** 0.5
+            
+            # More accurate collision threshold - entities are about 0.8 units in diameter
+            if distance < 0.7:  # Collision detected
                 if ghost.vulnerable:
                     # Eat the ghost
                     self.score += 200
@@ -476,7 +484,7 @@ class Game:
                     ghost.color = ghost.original_color
                     ghost.speed = 0.08
                 else:
-                    # Game over
+                    # Game over - ghost caught Pac-Man
                     self.game_over = True
                     self.play_sound('death')
                     return
